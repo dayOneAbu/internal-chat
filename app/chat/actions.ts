@@ -11,6 +11,59 @@ function getString(formData: FormData, key: string) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function extractSharedLinks(content: string) {
+  const matches = content.match(/https?:\/\/[^\s]+/g) ?? [];
+
+  return matches.map((url) => ({
+    url,
+    title: url,
+    description: "Shared from the conversation thread.",
+    accent: "bg-slate-900 text-white",
+  }));
+}
+
+function extractSharedDocs(content: string) {
+  const matches =
+    content.match(/\b[\w-]+\.(pdf|docx|fig|ai|png|jpg|jpeg)\b/gi) ?? [];
+
+  return matches.map((name) => {
+    const extension = name.split(".").pop()?.toUpperCase() ?? "FILE";
+
+    return {
+      name,
+      meta: `Shared in chat • ${extension.toLowerCase()}`,
+      tone:
+        extension === "PDF"
+          ? "bg-red-50 text-red-500"
+          : extension === "FIG"
+            ? "bg-violet-50 text-violet-500"
+            : extension === "AI"
+              ? "bg-orange-50 text-orange-500"
+              : "bg-slate-100 text-slate-500",
+      short: extension,
+    };
+  });
+}
+
+function extractSharedMedia(content: string) {
+  const hasMediaHint = /\b(image|photo|screenshot|mockup|artwork|design)\b/i.test(
+    content
+  );
+
+  if (!hasMediaHint) {
+    return [];
+  }
+
+  return [
+    {
+      month: new Intl.DateTimeFormat("en-US", { month: "long" }).format(
+        new Date()
+      ),
+      tone: "from-fuchsia-500 via-violet-500 to-cyan-300",
+    },
+  ];
+}
+
 function getChatRedirectPath(formData: FormData, sessionId?: string | null) {
   const requestedPath = getString(formData, "redirectTo");
 
@@ -89,6 +142,9 @@ export async function sendMessageAction(formData: FormData) {
         sessionId,
         senderId: currentUserId,
         content,
+        sharedLinks: extractSharedLinks(content),
+        sharedDocs: extractSharedDocs(content),
+        sharedMedia: extractSharedMedia(content),
       },
     }),
     prisma.session.update({

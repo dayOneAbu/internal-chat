@@ -11,7 +11,13 @@ import {
 } from "@/app/chat/actions";
 import { signOutAction } from "@/app/auth/actions";
 import { ChatWorkspace } from "@/components/chat/chat-workspace";
+import {
+  parseSharedDocs,
+  parseSharedLinks,
+  parseSharedMedia,
+} from "@/lib/chat-shared-assets";
 import { upsertSupabaseUser } from "@/lib/auth/upsert-user";
+import { extractConversationSharedAssets } from "@/lib/chat-shared-assets";
 import { prisma } from "@/lib/prisma";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -198,7 +204,18 @@ export default async function ChatPage({ searchParams }: ChatPageProps) {
 
   const selectedConversation =
     selectedSession && selectedPeer && selectedParticipant
-      ? {
+      ? (() => {
+          const visibleMessages = selectedSession.messages.filter((message) => {
+            if (!selectedParticipant.clearedAt) {
+              return true;
+            }
+
+            return message.createdAt > selectedParticipant.clearedAt;
+          });
+
+          const sharedAssets = extractConversationSharedAssets(visibleMessages);
+
+          return {
           sessionId: selectedSession.id,
           peer: {
             id: selectedPeer.id,
@@ -208,15 +225,7 @@ export default async function ChatPage({ searchParams }: ChatPageProps) {
             isAi: selectedPeer.isAi,
             isOnline: true,
           },
-          messages: selectedSession.messages
-            .filter((message) => {
-              if (!selectedParticipant.clearedAt) {
-                return true;
-              }
-
-              return message.createdAt > selectedParticipant.clearedAt;
-            })
-            .map((message) => ({
+          messages: visibleMessages.map((message) => ({
               id: message.id,
               senderId: message.senderId,
               senderName: message.sender.name,
@@ -224,8 +233,15 @@ export default async function ChatPage({ searchParams }: ChatPageProps) {
               content: message.content,
               createdAt: message.createdAt.toISOString(),
               isAi: message.isAi,
+              sharedLinks: parseSharedLinks(message.sharedLinks),
+              sharedDocs: parseSharedDocs(message.sharedDocs),
+              sharedMedia: parseSharedMedia(message.sharedMedia),
             })),
-        }
+          sharedLinks: sharedAssets.sharedLinks,
+          sharedDocs: sharedAssets.sharedDocs,
+          sharedMedia: sharedAssets.sharedMedia,
+        };
+      })()
       : null;
 
   return (

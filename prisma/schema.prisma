@@ -51,12 +51,15 @@ model SessionParticipant {
 }
 
 model Message {
-  id        String   @id @default(cuid())
-  sessionId String
-  senderId  String
-  content   String
-  createdAt DateTime @default(now())
-  isAi      Boolean  @default(false)
+  id             String   @id @default(cuid())
+  sessionId      String
+  senderId       String
+  content        String
+  createdAt      DateTime @default(now())
+  isAi           Boolean  @default(false)
+  sharedLinks    Json?
+  sharedDocs     Json?
+  sharedMedia    Json?
 
   session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   sender  User    @relation("SentMessages", fields: [senderId], references: [id], onDelete: Restrict)

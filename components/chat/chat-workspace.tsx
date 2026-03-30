@@ -72,6 +72,8 @@ import type {
   ChatUser,
   ConversationListItem,
   RealtimeMessageInsert,
+  SharedDocItem,
+  SharedLinkItem,
   SelectedConversation,
 } from "@/components/chat/chat-types";
 import { useChatWorkspaceStore } from "@/components/chat/use-chat-workspace-store";
@@ -129,33 +131,37 @@ const mediaGroups = [
   },
 ];
 
-const sharedLinks = [
+const sharedLinks: SharedLinkItem[] = [
   {
-    name: "https://basecamp.net/",
+    url: "https://basecamp.net/",
+    title: "https://basecamp.net/",
     description:
       "Discover thousands of premium UI kits, templates, and design resources.",
     accent: "bg-slate-900 text-white",
   },
   {
-    name: "https://notion.com/",
+    url: "https://notion.com/",
+    title: "https://notion.com/",
     description: "A new tool that blends your everyday work apps into one.",
     accent: "bg-white text-black border border-slate-200",
   },
   {
-    name: "https://asana.com/",
+    url: "https://asana.com/",
+    title: "https://asana.com/",
     description:
       "Work anytime, anywhere with focused project and workflow tracking.",
     accent: "bg-rose-500 text-white",
   },
   {
-    name: "https://trello.com/",
+    url: "https://trello.com/",
+    title: "https://trello.com/",
     description:
       "Make the impossible possible with a clean task board for the team.",
     accent: "bg-sky-500 text-white",
   },
 ];
 
-const sharedDocs = [
+const sharedDocs: SharedDocItem[] = [
   {
     name: "Document Requirement.pdf",
     meta: "10 pages • 16 MB • pdf",
@@ -325,6 +331,13 @@ function ContactInfoContent({
     );
   }
 
+  const mediaContent =
+    conversation.sharedMedia.length > 0 ? conversation.sharedMedia : mediaGroups;
+  const linkContent =
+    conversation.sharedLinks.length > 0 ? conversation.sharedLinks : sharedLinks;
+  const docsContent =
+    conversation.sharedDocs.length > 0 ? conversation.sharedDocs : sharedDocs;
+
   return (
     <div
       key={conversation.sessionId}
@@ -402,7 +415,7 @@ function ContactInfoContent({
           <ScrollArea className="h-[calc(100vh-17.5rem)] pr-2">
             {activeTab === "media" ? (
               <div className="space-y-5">
-                {mediaGroups.map((group) => (
+                {mediaContent.map((group) => (
                   <div key={group.month}>
                     <div className="mb-3 rounded-xl bg-[#f4f0e6] px-3 py-2 text-xs font-medium text-slate-500">
                       {group.month}
@@ -425,9 +438,9 @@ function ContactInfoContent({
 
             {activeTab === "link" ? (
               <div className="space-y-3">
-                {sharedLinks.map((item) => (
+                {linkContent.map((item) => (
                   <Card
-                    key={item.name}
+                    key={item.url}
                     className="gap-0 rounded-2xl border-[#ece8dc] bg-white py-0 shadow-none"
                   >
                     <CardContent className="flex items-start gap-3 px-3.5 py-3.5">
@@ -441,10 +454,10 @@ function ContactInfoContent({
                       </div>
                       <div className="min-w-0">
                         <p className="truncate text-sm font-medium text-slate-900">
-                          {item.name}
+                          {item.title ?? item.url}
                         </p>
                         <p className="mt-1 line-clamp-2 text-xs leading-4.5 text-slate-500">
-                          {item.description}
+                          {item.description ?? item.url}
                         </p>
                       </div>
                     </CardContent>
@@ -455,7 +468,7 @@ function ContactInfoContent({
 
             {activeTab === "docs" ? (
               <div className="space-y-3">
-                {sharedDocs.map((item) => (
+                {docsContent.map((item) => (
                   <Card
                     key={item.name}
                     className="gap-0 rounded-2xl border-[#ece8dc] bg-white py-0 shadow-none"
