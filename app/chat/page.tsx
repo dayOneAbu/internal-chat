@@ -1,10 +1,17 @@
 import { redirect } from "next/navigation";
 
-import { openDirectSessionAction, sendMessageAction } from "@/app/chat/actions";
+import {
+  archiveConversationAction,
+  clearConversationAction,
+  deleteConversationAction,
+  markConversationUnreadAction,
+  openDirectSessionAction,
+  sendMessageAction,
+  toggleMuteConversationAction,
+} from "@/app/chat/actions";
 import { signOutAction } from "@/app/auth/actions";
 import { ChatWorkspace } from "@/components/chat/chat-workspace";
 import { upsertSupabaseUser } from "@/lib/auth/upsert-user";
-import { getDirectSessionKey } from "@/lib/chat";
 import { prisma } from "@/lib/prisma";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -34,7 +41,7 @@ export default async function ChatPage({ searchParams }: ChatPageProps) {
 
   const appUser = await upsertSupabaseUser(user);
 
-  const [users, sessions] = await Promise.all([
+  const [contacts, sessions] = await Promise.all([
     prisma.user.findMany({
       where: {
         id: { not: appUser.id },
@@ -46,6 +53,7 @@ export default async function ChatPage({ searchParams }: ChatPageProps) {
         participants: {
           some: {
             userId: appUser.id,
+            isArchived: false,
           },
         },
       },
@@ -68,12 +76,6 @@ export default async function ChatPage({ searchParams }: ChatPageProps) {
     }),
   ]);
 
-  const sessionByDirectKey = new Map(
-    sessions
-      .filter((session) => session.directKey)
-      .map((session) => [session.directKey as string, session])
-  );
-
   const resolvedSelectedSessionId =
     typeof params.session === "string" ? params.session : sessions[0]?.id;
 
@@ -84,6 +86,7 @@ export default async function ChatPage({ searchParams }: ChatPageProps) {
           participants: {
             some: {
               userId: appUser.id,
+              isArchived: false,
             },
           },
         },
@@ -105,35 +108,96 @@ export default async function ChatPage({ searchParams }: ChatPageProps) {
       })
     : null;
 
+  const selectedParticipant =
+    selectedSession?.participants.find(
+      (participant) => participant.userId === appUser.id
+    ) ?? null;
   const selectedPeer =
     selectedSession?.participants.find(
       (participant) => participant.userId !== appUser.id
     )?.user ?? null;
 
-  const conversations = users.map((chatUser, index) => {
-    const directKey = getDirectSessionKey(appUser.id, chatUser.id);
-    const existingSession = sessionByDirectKey.get(directKey);
-    const latestMessage = existingSession?.messages[0] ?? null;
+  const latestVisibleSelectedMessage =
+    selectedSession && selectedParticipant
+      ? [...selectedSession.messages]
+          .reverse()
+          .find((message) => {
+            if (!selectedParticipant.clearedAt) {
+              return true;
+            }
 
-    return {
-      id: chatUser.id,
-      name: chatUser.name,
-      email: chatUser.email,
-      avatarUrl: chatUser.avatarUrl,
-      isAi: chatUser.isAi,
-      latestMessage: latestMessage?.content ?? null,
-      latestAt:
-        latestMessage?.createdAt?.toISOString() ??
-        existingSession?.updatedAt.toISOString() ??
-        null,
-      isSelected: selectedPeer?.id === chatUser.id,
-      isOnline: index < 2 || chatUser.isAi,
-      isUnread: index === 0 && selectedPeer?.id !== chatUser.id,
-    };
+            return message.createdAt > selectedParticipant.clearedAt;
+          }) ?? null
+      : null;
+
+  if (
+    selectedSession &&
+    selectedParticipant &&
+    latestVisibleSelectedMessage &&
+    latestVisibleSelectedMessage.senderId !== appUser.id &&
+    (!selectedParticipant.lastReadAt ||
+      latestVisibleSelectedMessage.createdAt > selectedParticipant.lastReadAt)
+  ) {
+    await prisma.sessionParticipant.update({
+      where: {
+        sessionId_userId: {
+          sessionId: selectedSession.id,
+          userId: appUser.id,
+        },
+      },
+      data: {
+        lastReadAt: new Date(),
+      },
+    });
+  }
+
+  const conversations = sessions.flatMap((session, index) => {
+    const currentParticipant = session.participants.find(
+      (participant) => participant.userId === appUser.id
+    );
+    const peerParticipant = session.participants.find(
+      (participant) => participant.userId !== appUser.id
+    );
+
+    if (!currentParticipant || !peerParticipant) {
+      return [];
+    }
+
+    const latestVisibleMessage =
+      session.messages.find((message) => {
+        if (!currentParticipant.clearedAt) {
+          return true;
+        }
+
+        return message.createdAt > currentParticipant.clearedAt;
+      }) ?? null;
+
+    const isUnread = latestVisibleMessage
+      ? latestVisibleMessage.senderId !== appUser.id &&
+        (!currentParticipant.lastReadAt ||
+          latestVisibleMessage.createdAt > currentParticipant.lastReadAt)
+      : false;
+
+    return [
+      {
+        sessionId: session.id,
+        id: peerParticipant.user.id,
+        name: peerParticipant.user.name,
+        email: peerParticipant.user.email,
+        avatarUrl: peerParticipant.user.avatarUrl,
+        isAi: peerParticipant.user.isAi,
+        latestMessage: latestVisibleMessage?.content ?? null,
+        latestAt: latestVisibleMessage?.createdAt.toISOString() ?? null,
+        isSelected: selectedSession?.id === session.id,
+        isOnline: index < 2 || peerParticipant.user.isAi,
+        isUnread,
+        isMuted: currentParticipant.isMuted,
+      },
+    ];
   });
 
   const selectedConversation =
-    selectedSession && selectedPeer
+    selectedSession && selectedPeer && selectedParticipant
       ? {
           sessionId: selectedSession.id,
           peer: {
@@ -144,15 +208,23 @@ export default async function ChatPage({ searchParams }: ChatPageProps) {
             isAi: selectedPeer.isAi,
             isOnline: true,
           },
-          messages: selectedSession.messages.map((message) => ({
-            id: message.id,
-            senderId: message.senderId,
-            senderName: message.sender.name,
-            senderEmail: message.sender.email,
-            content: message.content,
-            createdAt: message.createdAt.toISOString(),
-            isAi: message.isAi,
-          })),
+          messages: selectedSession.messages
+            .filter((message) => {
+              if (!selectedParticipant.clearedAt) {
+                return true;
+              }
+
+              return message.createdAt > selectedParticipant.clearedAt;
+            })
+            .map((message) => ({
+              id: message.id,
+              senderId: message.senderId,
+              senderName: message.sender.name,
+              senderEmail: message.sender.email,
+              content: message.content,
+              createdAt: message.createdAt.toISOString(),
+              isAi: message.isAi,
+            })),
         }
       : null;
 
@@ -165,10 +237,22 @@ export default async function ChatPage({ searchParams }: ChatPageProps) {
         avatarUrl: appUser.avatarUrl,
         isAi: appUser.isAi,
       }}
+      contacts={contacts.map((contact) => ({
+        id: contact.id,
+        name: contact.name,
+        email: contact.email,
+        avatarUrl: contact.avatarUrl,
+        isAi: contact.isAi,
+      }))}
       conversations={conversations}
       selectedConversation={selectedConversation}
       openDirectSessionAction={openDirectSessionAction}
       sendMessageAction={sendMessageAction}
+      archiveConversationAction={archiveConversationAction}
+      markConversationUnreadAction={markConversationUnreadAction}
+      toggleMuteConversationAction={toggleMuteConversationAction}
+      clearConversationAction={clearConversationAction}
+      deleteConversationAction={deleteConversationAction}
       signOutAction={signOutAction}
     />
   );

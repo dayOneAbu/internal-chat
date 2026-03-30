@@ -35,9 +35,13 @@ model Session {
 }
 
 model SessionParticipant {
-  sessionId String
-  userId    String
-  joinedAt  DateTime @default(now())
+  sessionId   String
+  userId      String
+  joinedAt    DateTime @default(now())
+  isArchived  Boolean  @default(false)
+  isMuted     Boolean  @default(false)
+  lastReadAt  DateTime?
+  clearedAt   DateTime?
 
   session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)

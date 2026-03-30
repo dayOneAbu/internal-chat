@@ -19,6 +19,40 @@ export async function findOrCreateDirectSession(
   });
 
   if (existingSession) {
+    await prisma.$transaction([
+      prisma.sessionParticipant.upsert({
+        where: {
+          sessionId_userId: {
+            sessionId: existingSession.id,
+            userId: currentUserId,
+          },
+        },
+        update: {
+          isArchived: false,
+          lastReadAt: new Date(),
+        },
+        create: {
+          sessionId: existingSession.id,
+          userId: currentUserId,
+          isArchived: false,
+          lastReadAt: new Date(),
+        },
+      }),
+      prisma.sessionParticipant.upsert({
+        where: {
+          sessionId_userId: {
+            sessionId: existingSession.id,
+            userId: targetUserId,
+          },
+        },
+        update: {},
+        create: {
+          sessionId: existingSession.id,
+          userId: targetUserId,
+        },
+      }),
+    ]);
+
     return existingSession;
   }
 
@@ -28,7 +62,10 @@ export async function findOrCreateDirectSession(
         kind: "direct",
         directKey,
         participants: {
-          create: [{ userId: currentUserId }, { userId: targetUserId }],
+          create: [
+            { userId: currentUserId, lastReadAt: new Date() },
+            { userId: targetUserId },
+          ],
         },
       },
     });
