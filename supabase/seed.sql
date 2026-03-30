@@ -1,0 +1,1 @@
+-- Seed data will be added once the auth and chat schema are in place.

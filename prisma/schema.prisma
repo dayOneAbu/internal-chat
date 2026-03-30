@@ -1,0 +1,62 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum SessionKind {
+  direct
+  ai
+}
+
+model User {
+  id        String               @id
+  email     String?              @unique
+  name      String?
+  avatarUrl String?
+  isAi      Boolean              @default(false)
+  createdAt DateTime             @default(now())
+
+  participants SessionParticipant[]
+  messages     Message[]          @relation("SentMessages")
+}
+
+model Session {
+  id        String               @id @default(cuid())
+  kind      SessionKind          @default(direct)
+  directKey String?              @unique
+  createdAt DateTime             @default(now())
+  updatedAt DateTime             @updatedAt
+
+  participants SessionParticipant[]
+  messages     Message[]
+}
+
+model SessionParticipant {
+  sessionId String
+  userId    String
+  joinedAt  DateTime @default(now())
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([sessionId, userId])
+  @@index([userId])
+}
+
+model Message {
+  id        String   @id @default(cuid())
+  sessionId String
+  senderId  String
+  content   String
+  createdAt DateTime @default(now())
+  isAi      Boolean  @default(false)
+
+  session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  sender  User    @relation("SentMessages", fields: [senderId], references: [id], onDelete: Restrict)
+
+  @@index([sessionId, createdAt])
+  @@index([senderId, createdAt])
+}
