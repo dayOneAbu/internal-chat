@@ -1,36 +1,76 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+ShipChat is a real-time internal chat MVP built with Next.js, Supabase, Prisma, and shadcn/ui.
 
 ## Getting Started
 
-First, run the development server:
+Run the app:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
 bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open `http://127.0.0.1:3000`.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Shadcn Registry And MCP
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+This repo exposes a local shadcn-compatible registry for the reusable auth screen.
 
-## Learn More
+Build the registry payloads:
 
-To learn more about Next.js, take a look at the following resources:
+```bash
+bun run registry:build
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Once the app is running, the registry endpoints are:
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- `http://127.0.0.1:3000/r/registry.json`
+- `http://127.0.0.1:3000/r/shipchat-auth-screen.json`
 
-## Deploy on Vercel
+The local registry is already configured in `components.json`:
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```json
+{
+  "registries": {
+    "@shipchat": "http://127.0.0.1:3000/r/{name}.json"
+  }
+}
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+For Codex MCP support, add this to `~/.codex/config.toml` and restart Codex:
+
+```toml
+[mcp_servers.shadcn]
+command = "npx"
+args = ["shadcn@latest", "mcp"]
+```
+
+After that, Codex can query the local registry through the shadcn MCP server.
+
+## Supabase MCP
+
+This project already includes a local Supabase CLI setup, so you can use either the local MCP server for this repo or Supabase's hosted remote MCP server.
+
+Start the local Supabase stack when you want MCP access to the local development database:
+
+```bash
+bun run supabase:start
+```
+
+That exposes the local MCP endpoint at `http://127.0.0.1:54321/mcp`.
+
+For Codex, add one or both of these servers to `~/.codex/config.toml` and restart Codex:
+
+```toml
+[mcp_servers.supabase_local]
+url = "http://127.0.0.1:54321/mcp"
+
+[mcp_servers.supabase_hosted]
+url = "https://mcp.supabase.com/mcp?read_only=true"
+```
+
+Notes:
+
+- `supabase_local` talks to this repo's local Supabase stack.
+- `supabase_hosted` uses browser-based OAuth on first connect. Supabase no longer requires a personal access token for the default setup.
+- MCP server names are arbitrary. If you already have a local `[mcp_servers.supabase]` entry, you can keep that name and only add a separate hosted entry.
+- `read_only=true` is the safest default. If you want to scope hosted access to a single project, use `https://mcp.supabase.com/mcp?project_ref=<your-project-ref>&read_only=true`.
+- You can further restrict the hosted server with feature groups, for example `https://mcp.supabase.com/mcp?project_ref=<your-project-ref>&read_only=true&features=database,docs`.

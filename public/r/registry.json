@@ -1,0 +1,22 @@
+{
+  "$schema": "https://ui.shadcn.com/schema/registry.json",
+  "name": "shipchat-registry",
+  "homepage": "http://127.0.0.1:3000",
+  "items": [
+    {
+      "name": "shipchat-auth-screen",
+      "type": "registry:ui",
+      "title": "ShipChat Auth Screen",
+      "author": "ShipChat",
+      "description": "A conversion-focused auth screen for internal chat products with sign-in and sign-up flows.",
+      "dependencies": ["framer-motion", "lucide-react"],
+      "categories": ["auth", "marketing", "dashboard"],
+      "files": [
+        {
+          "path": "registry/new-york/ui/shipchat-auth-screen.tsx",
+          "type": "registry:ui"
+        }
+      ]
+    }
+  ]
+}
