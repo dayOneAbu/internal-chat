@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { motion } from "framer-motion";
 import { 
   Search, 
@@ -324,10 +325,11 @@ function SwipeableConversationRow({
         }}
         className="group relative z-10 flex items-center overflow-hidden rounded-[22px] p-1.5 touch-pan-y"
       >
-        <form action={openDirectSessionAction} className="flex-1 min-w-0">
-          <input type="hidden" name="targetUserId" value={conversation.id} />
-          <button
-            type="submit"
+        <Link 
+          href={`/chat?session=${conversation.sessionId}`}
+          className="flex-1 min-w-0"
+        >
+          <div
             className={cn(
               "flex w-full items-center gap-3 overflow-hidden rounded-[18px] px-3 py-2.5 text-left transition-colors",
               conversation.isSelected ? "bg-white" : "bg-transparent hover:bg-white/70"
@@ -336,7 +338,7 @@ function SwipeableConversationRow({
               if (isTouchMode || event.button !== 0) {
                 return;
               }
-
+ 
               clearLongPressTimer();
               longPressTimerRef.current = window.setTimeout(() => {
                 openDesktopMenu();
@@ -349,14 +351,14 @@ function SwipeableConversationRow({
               if (isTouchMode) {
                 return;
               }
-
+ 
               event.preventDefault();
               clearLongPressTimer();
               openDesktopMenu();
             }}
             onClick={(event) => {
               clearLongPressTimer();
-
+ 
               if (!isTouchMode && (event.altKey || suppressNextClickRef.current)) {
                 event.preventDefault();
                 event.stopPropagation();
@@ -364,7 +366,7 @@ function SwipeableConversationRow({
                 setMenuOpen(true);
                 return;
               }
-
+ 
               if (swipeSide) {
                 event.preventDefault();
                 setSwipeSide(null);
@@ -403,8 +405,8 @@ function SwipeableConversationRow({
                 <CheckCheck className={cn("size-3.5", conversation.unreadCount > 0 ? "text-slate-200" : "text-[#2ea48c]/40")} />
               </div>
             </div>
-          </button>
-        </form>
+          </div>
+        </Link>
 
         <DropdownMenu
           open={menuOpen}

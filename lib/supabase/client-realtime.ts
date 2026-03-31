@@ -64,10 +64,11 @@ function createRobustChannel(
         if (retries < MAX_RETRIES) {
           const timeout = Math.pow(2, retries) * 1000 + Math.random() * 1000;
           retries++;
-          console.warn(`[Realtime] ${channelId} disconnected (${status}). Retrying in ${Math.round(timeout)}ms... (Attempt ${retries})`);
+          console.warn(`[Realtime] ${channelId} disconnected (${status}).`, { status, channelId, retries });
+          console.warn(`Retrying in ${Math.round(timeout)}ms... (Attempt ${retries})`);
           setTimeout(connect, timeout);
         } else {
-          console.error(`[Realtime] ${channelId} disconnected and reached max retries.`);
+          console.error(`[Realtime] ${channelId} disconnected and reached max retries. Final status: ${status}`);
         }
       }
     });
@@ -101,6 +102,36 @@ export function useChatRealtime(currentUserId: string, activeSessionId?: string)
 
   // 1. Workspace Presence
   useEffect(() => {
+    let cleanup: (() => void) | undefined;
+
+    const connect = async () => {
+      if (cleanup) cleanup();
+      
+      cleanup = createRobustChannel(
+        supabase,
+        WORKSPACE_PRESENCE_CHANNEL,
+        {
+          config: {
+            private: false,
+            presence: { key: currentUserId },
+          },
+        },
+        (channel) => {
+          channel
+            .on("presence", { event: "sync" }, () => syncPresenceMembers(channel))
+            .on("presence", { event: "join" }, () => syncPresenceMembers(channel))
+            .on("presence", { event: "leave" }, () => syncPresenceMembers(channel));
+        },
+        async (channel) => {
+          await channel.track({
+            userId: currentUserId,
+            onlineAt: new Date().toISOString(),
+          } satisfies PresenceMemberPayload);
+          syncPresenceMembers(channel);
+        }
+      );
+    };
+
     const syncPresenceMembers = (channel: RealtimeChannel) => {
       const state = channel.presenceState();
       const nextUserIds = Object.values(state).flatMap((entries) =>
@@ -114,29 +145,18 @@ export function useChatRealtime(currentUserId: string, activeSessionId?: string)
       setPresenceMembers([...new Set(nextUserIds)]);
     };
 
-    return createRobustChannel(
-      supabase,
-      WORKSPACE_PRESENCE_CHANNEL,
-      {
-        config: {
-          private: true,
-          presence: { key: currentUserId },
-        },
-      },
-      (channel) => {
-        channel
-          .on("presence", { event: "sync" }, () => syncPresenceMembers(channel))
-          .on("presence", { event: "join" }, () => syncPresenceMembers(channel))
-          .on("presence", { event: "leave" }, () => syncPresenceMembers(channel));
-      },
-      async (channel) => {
-        await channel.track({
-          userId: currentUserId,
-          onlineAt: new Date().toISOString(),
-        } satisfies PresenceMemberPayload);
-        syncPresenceMembers(channel);
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+        connect();
       }
-    );
+    });
+
+    connect();
+
+    return () => {
+      subscription.unsubscribe();
+      if (cleanup) cleanup();
+    };
   }, [currentUserId, setPresenceMembers, supabase]);
 
   // 2. User Inbox (listens to all conversations)
@@ -144,7 +164,7 @@ export function useChatRealtime(currentUserId: string, activeSessionId?: string)
     return createRobustChannel(
       supabase,
       getUserInboxChannelName(currentUserId),
-      { config: { private: true } },
+      { config: { private: false } },
       (channel) => {
         channel.on(
           "broadcast",
@@ -166,7 +186,7 @@ export function useChatRealtime(currentUserId: string, activeSessionId?: string)
     return createRobustChannel(
       supabase,
       getSessionChannelName(activeSessionId),
-      { config: { private: true } },
+      { config: { private: false } },
       (channel) => {
         channel.on(
           "broadcast",
@@ -248,7 +268,7 @@ export function useChatRealtime(currentUserId: string, activeSessionId?: string)
     return createRobustChannel(
       supabase,
       getTypingChannelName(sessionId),
-      { config: { private: true } },
+      { config: { private: false } },
       (channel) => {
         typingChannelRef.current = channel;
         

@@ -18,23 +18,37 @@ import { createSupabaseAdminClient } from "@/lib/supabase/admin";
 
 async function sendPrivateBroadcast(topic: string, event: string, payload: unknown) {
   const supabase = createSupabaseAdminClient();
-  const channel = supabase.channel(topic, {
+  const channelId = `broadcast-${Date.now()}-${Math.random().toString(36).substring(7)}`;
+  const channel = supabase.channel(channelId, {
     config: {
-      private: true,
+      private: false,
     },
   });
 
-  try {
-    const result = await channel.httpSend(event, payload);
+  // Use a shorter timeout and don't block the main thread if it fails
+  const broadcastPromise = (async () => {
+    try {
+      // Race against a 2.5s timeout to prevent 10s+ hangs
+      const result = await Promise.race([
+        channel.httpSend(event, payload),
+        new Promise<never>((_, reject) => 
+          setTimeout(() => reject(new Error("Broadcast timeout")), 2500)
+        )
+      ]);
 
-    if (!result.success) {
-      throw new Error(
-        `Supabase broadcast failed with status: ${result.status} (${result.error})`
-      );
+      if (typeof result === 'object' && result !== null && 'success' in result && !result.success) {
+        console.error(`[Realtime] Broadcast failed: ${topic}/${event}`, result.error);
+      }
+    } catch (error) {
+      console.error(`[Realtime] Broadcast error: ${topic}/${event}`, error);
+    } finally {
+      supabase.removeChannel(channel).catch(() => {});
     }
-  } finally {
-    await supabase.removeChannel(channel);
-  }
+  })();
+
+  // We await it here but in a transaction-safe way or fire-and-forget
+  // For critical messaging, we might want to wait, but for receipts, we don't.
+  return broadcastPromise;
 }
 
 export async function broadcastMessageCreated(params: {

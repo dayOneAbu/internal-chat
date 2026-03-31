@@ -55,7 +55,16 @@ type ChatWorkspaceState = {
       isArchived: boolean;
     }
   ) => void;
-  applyReadReceipt?: (sessionId: string, readAt: string) => void;
+  applyReadReceipt: (sessionId: string, readAt: string) => void;
+  addOptimisticMessage: (
+    sessionId: string,
+    content: string,
+    sender: ChatUser
+  ) => string;
+  addOptimisticReaction: (
+    messageId: string,
+    emoji: string
+  ) => void;
 };
 
 export const useChatWorkspaceStore = create<ChatWorkspaceState>((set, get) => ({
@@ -202,14 +211,25 @@ export const useChatWorkspaceStore = create<ChatWorkspaceState>((set, get) => ({
           : [...state.contacts, conversationMeta.peer]
         : state.contacts;
 
+      // Clean up any optimistic messages that match this one
+      const finalActiveConversation = activeConversation 
+        ? {
+            ...activeConversation,
+            messages: activeConversation.messages.filter(m => 
+              !(m.id.startsWith("temp-") && m.content === message.content && m.senderId === message.senderId)
+            )
+          }
+        : activeConversation;
+
       if (
         !isActiveConversation ||
-        !activeConversation ||
-        activeConversation.messages.some((entry) => entry.id === message.id)
+        !finalActiveConversation ||
+        finalActiveConversation.messages.some((entry) => entry.id === message.id)
       ) {
         return {
           contacts: nextContacts,
           conversationItems: nextConversationItems,
+          activeConversation: finalActiveConversation
         };
       }
 
@@ -233,7 +253,7 @@ export const useChatWorkspaceStore = create<ChatWorkspaceState>((set, get) => ({
             "sharedLinks" | "sharedDocs" | "sharedMedia"
           >),
           messages: [
-            ...activeConversation.messages,
+            ...finalActiveConversation.messages,
             {
               id: message.id,
               senderId: message.senderId,
@@ -284,4 +304,99 @@ export const useChatWorkspaceStore = create<ChatWorkspaceState>((set, get) => ({
         },
       };
     }),
+  addOptimisticMessage: (sessionId, content, sender) => {
+    const tempId = `temp-${Date.now()}`;
+    const now = new Date().toISOString();
+
+    set((state) => {
+      const activeConversation = state.activeConversation;
+      if (!activeConversation || activeConversation.sessionId !== sessionId) {
+        return state;
+      }
+
+      const nextMessage = {
+        id: tempId,
+        senderId: sender.id,
+        senderName: sender.name,
+        senderEmail: sender.email,
+        content: content,
+        createdAt: now,
+        isAi: false,
+        isReadByPeer: false,
+        reactions: [],
+        sharedLinks: [],
+        sharedDocs: [],
+        sharedMedia: [],
+      };
+
+      const nextConversationItems = state.conversationItems
+        .map((item) =>
+          item.sessionId === sessionId
+            ? { ...item, latestMessage: content, latestAt: now }
+            : item
+        )
+        .sort((left, right) => {
+          const leftTime = left.latestAt ? new Date(left.latestAt).getTime() : 0;
+          const rightTime = right.latestAt ? new Date(right.latestAt).getTime() : 0;
+          return rightTime - leftTime;
+        });
+
+      return {
+        activeConversation: {
+          ...activeConversation,
+          messages: [...activeConversation.messages, nextMessage],
+        },
+        conversationItems: nextConversationItems,
+      };
+    });
+
+    return tempId;
+  },
+  addOptimisticReaction: (messageId, emoji) => {
+    set((state) => {
+      const activeConversation = state.activeConversation;
+      if (!activeConversation) return state;
+
+      const nextMessages = activeConversation.messages.map((message) => {
+        if (message.id !== messageId) return message;
+
+        const currentReactions = message.reactions ?? [];
+        const existing = currentReactions.find((r) => r.emoji === emoji);
+        let nextReactions;
+
+        if (existing) {
+          if (existing.reactedByCurrentUser) {
+            // Remove my reaction
+            if (existing.count === 1) {
+              nextReactions = currentReactions.filter((r) => r.emoji !== emoji);
+            } else {
+              nextReactions = currentReactions.map((r) =>
+                r.emoji === emoji ? { ...r, count: r.count - 1, reactedByCurrentUser: false } : r
+              );
+            }
+          } else {
+            // Add my reaction to existing
+            nextReactions = currentReactions.map((r) =>
+              r.emoji === emoji ? { ...r, count: r.count + 1, reactedByCurrentUser: true } : r
+            );
+          }
+        } else {
+          // New reaction emoji
+          nextReactions = [
+            ...currentReactions,
+            { emoji, count: 1, reactedByCurrentUser: true },
+          ];
+        }
+
+        return { ...message, reactions: nextReactions };
+      });
+
+      return {
+        activeConversation: {
+          ...activeConversation,
+          messages: nextMessages,
+        },
+      };
+    });
+  },
 }));

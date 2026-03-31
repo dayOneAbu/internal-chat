@@ -40,6 +40,8 @@ export const viewport: Viewport = {
   themeColor: "#2ea48c",
 };
 
+import { ErrorBoundary } from "@/components/error-boundary";
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -48,7 +50,9 @@ export default function RootLayout({
   return (
     <html lang="en" className="h-full antialiased">
       <body className="min-h-full bg-background font-sans text-foreground">
-        {children}
+        <ErrorBoundary>
+          {children}
+        </ErrorBoundary>
       </body>
     </html>
   );

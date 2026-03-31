@@ -76,6 +76,8 @@ export function ChatWorkspace({
     setMessageSearchQuery,
     setNewMessageQuery,
     setActiveCall,
+    addOptimisticMessage,
+    addOptimisticReaction,
   } = useChatWorkspaceStore();
   const activeSessionId = activeConversation?.sessionId;
   const { publishTypingState } = useChatRealtime(currentUser.id, activeSessionId);
@@ -214,6 +216,38 @@ export function ChatWorkspace({
     }
   }
 
+  const handleSendMessage = async (formData: FormData) => {
+    if (!activeConversation) return;
+
+    const content = formData.get("content") as string;
+    const hasAssets = formData.get("uploadedAssetsJson") !== "[]";
+    if (!content.trim() && !hasAssets) return;
+
+    // Trigger optimistic update (only if there's content to show)
+    if (content.trim()) {
+      addOptimisticMessage(activeConversation.sessionId, content, currentUser);
+    }
+
+    // Call server action
+    try {
+      await sendMessageAction(formData);
+    } catch (error) {
+      console.error("Failed to send message:", error);
+    }
+  };
+
+  const handleToggleReaction = async (messageId: string, emoji: string) => {
+    // Trigger optimistic update
+    addOptimisticReaction(messageId, emoji);
+
+    // Call server action
+    try {
+      await toggleMessageReactionAction(messageId, emoji);
+    } catch (error) {
+      console.error("Failed to toggle reaction:", error);
+    }
+  };
+
   return (
     <>
       <main className="h-screen overflow-hidden bg-[#f4f1ea] text-slate-900">
@@ -270,7 +304,7 @@ export function ChatWorkspace({
                 <MessageList
                   activeConversation={activeConversation}
                   currentUser={currentUser}
-                  toggleMessageReactionAction={toggleMessageReactionAction}
+                  toggleMessageReactionAction={handleToggleReaction}
                 />
 
                 <div className="border-t border-[#ece7dc] bg-white px-4 py-3 md:px-6">
@@ -278,7 +312,7 @@ export function ChatWorkspace({
                     key={activeConversation.sessionId}
                     isAiSession={activeConversation.peer.isAi}
                     sessionId={activeConversation.sessionId}
-                    sendMessageAction={sendMessageAction}
+                    sendMessageAction={handleSendMessage}
                     onAwaitingAiReplyChange={setIsAwaitingAiReply}
                     onTypingStateChange={publishTypingState}
                   />

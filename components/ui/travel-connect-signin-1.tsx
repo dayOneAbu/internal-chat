@@ -321,19 +321,10 @@ export default function TravelConnectSignIn1({
                   <div className="hidden xl:block">
                     <ShipChatLogo
                       markClassName="size-11"
-                      nameClassName="text-[1.4rem]"
-                      subtitle="Access the shared team workspace"
                     />
                   </div>
 
                   <div>
-                    <h1 className="text-[3rem] leading-[0.94] font-semibold tracking-tight text-slate-950 md:text-[3.35rem]">
-                      Welcome to ShipChat
-                    </h1>
-                    <p className="mt-3 max-w-md text-[15px] leading-8 text-slate-500">
-                      Sign in to keep operations, product, and engineering aligned
-                      in the same real-time workspace.
-                    </p>
                   </div>
                 </div>
               </div>
@@ -434,13 +425,11 @@ export default function TravelConnectSignIn1({
                     </div>
                   </div>
 
-                  <div className="rounded-[1.25rem] border border-[#ece4d8] bg-[#fbf9f3] px-4 py-3 text-sm text-slate-500">
-                    Your session is secured through Supabase auth and lands directly
-                    in the ShipChat workspace after sign-in.
+                  <div>
                   </div>
 
                   <SubmitButton
-                    idleLabel="Sign in to ShipChat"
+                    idleLabel="Sign in"
                     pendingLabel="Signing in..."
                   />
 
@@ -585,14 +574,12 @@ export default function TravelConnectSignIn1({
                   {signUpValidationError ? (
                     <StatusBanner kind="error" text={signUpValidationError} />
                   ) : (
-                    <div className="rounded-[1.25rem] border border-[#ece4d8] bg-[#fbf9f3] px-4 py-3 text-sm text-slate-500">
-                      New accounts can use email confirmation or Google OAuth and
-                      enter the same ShipChat workspace after verification.
+                    <div>
                     </div>
                   )}
 
                   <SubmitButton
-                    idleLabel="Create ShipChat account"
+                    idleLabel="Create account"
                     pendingLabel="Creating account..."
                     tone="secondary"
                   />
