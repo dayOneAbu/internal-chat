@@ -21,6 +21,7 @@ import {
 } from "@/lib/chat-shared-assets";
 import { summarizeMessageReactions } from "@/lib/message-reactions";
 import { prisma } from "@/lib/prisma";
+import type { Prisma } from "@prisma/client";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 type ChatPageProps = {
@@ -99,41 +100,41 @@ export default async function ChatPage({ searchParams }: ChatPageProps) {
 
   const selectedSession = resolvedSelectedSessionId
     ? await prisma.session.findFirst({
-        where: {
-          id: resolvedSelectedSessionId,
-          participants: {
-            some: {
-              userId: appUser.id,
-              isArchived: false,
-            },
+      where: {
+        id: resolvedSelectedSessionId,
+        participants: {
+          some: {
+            userId: appUser.id,
+            isArchived: false,
           },
         },
-        include: {
-          participants: {
-            include: {
-              user: true,
-            },
-          },
-          messages: {
-            orderBy: {
-              createdAt: "asc",
-            },
-            include: {
-              assets: true,
-              sender: true,
-            },
+      },
+      include: {
+        participants: {
+          include: {
+            user: true,
           },
         },
-      })
+        messages: {
+          orderBy: {
+            createdAt: "asc",
+          },
+          include: {
+            assets: true,
+            sender: true,
+          },
+        },
+      },
+    })
     : null;
 
   const selectedParticipant =
     selectedSession?.participants.find(
-      (participant) => participant.userId === appUser.id
+      (participant: { userId: string }) => participant.userId === appUser.id
     ) ?? null;
   const selectedPeerParticipant =
     selectedSession?.participants.find(
-      (participant) => participant.userId !== appUser.id
+      (participant: { userId: string, user: { id: string, name: string | null, email: string | null, avatarUrl: string | null, isAi: boolean } }) => participant.userId !== appUser.id
     ) ?? null;
   const selectedPeer =
     selectedPeerParticipant?.user ?? null;
@@ -141,25 +142,25 @@ export default async function ChatPage({ searchParams }: ChatPageProps) {
   const latestVisibleSelectedMessage =
     selectedSession && selectedParticipant
       ? [...selectedSession.messages]
-          .reverse()
-          .find((message) => {
-            if (!selectedParticipant.clearedAt) {
-              return true;
-            }
+        .reverse()
+        .find((message: { createdAt: Date }) => {
+          if (!selectedParticipant.clearedAt) {
+            return true;
+          }
 
-            return message.createdAt > selectedParticipant.clearedAt;
-          }) ?? null
+          return message.createdAt > selectedParticipant.clearedAt;
+        }) ?? null
       : null;
 
   const selectedConversationMarkedRead =
     !!(
-    selectedSession &&
-    selectedParticipant &&
-    latestVisibleSelectedMessage &&
-    latestVisibleSelectedMessage.senderId !== appUser.id &&
-    (!selectedParticipant.lastReadAt ||
-      latestVisibleSelectedMessage.createdAt > selectedParticipant.lastReadAt)
-  );
+      selectedSession &&
+      selectedParticipant &&
+      latestVisibleSelectedMessage &&
+      latestVisibleSelectedMessage.senderId !== appUser.id &&
+      (!selectedParticipant.lastReadAt ||
+        latestVisibleSelectedMessage.createdAt > selectedParticipant.lastReadAt)
+    );
 
   if (selectedConversationMarkedRead) {
     await prisma.sessionParticipant.update({
@@ -176,12 +177,12 @@ export default async function ChatPage({ searchParams }: ChatPageProps) {
   }
 
   const conversations = sessions
-    .flatMap((session) => {
+    .flatMap((session: { id: string, participants: { userId: string, isMuted: boolean, clearedAt: Date | null, lastReadAt: Date | null, user: { id: string, name: string | null, email: string | null, avatarUrl: string | null, isAi: boolean } }[], messages: { senderId: string, createdAt: Date, content: string | null }[] }) => {
       const currentParticipant = session.participants.find(
-        (participant) => participant.userId === appUser.id
+        (participant: { userId: string, isMuted: boolean, clearedAt: Date | null, lastReadAt: Date | null }) => participant.userId === appUser.id
       );
       const peerParticipant = session.participants.find(
-        (participant) => participant.userId !== appUser.id
+        (participant: { userId: string, user: { id: string, name: string | null, email: string | null, avatarUrl: string | null, isAi: boolean } }) => participant.userId !== appUser.id
       );
 
       if (!currentParticipant || !peerParticipant) {
@@ -189,7 +190,7 @@ export default async function ChatPage({ searchParams }: ChatPageProps) {
       }
 
       const latestVisibleMessage =
-        session.messages.find((message) => {
+        session.messages.find((message: { createdAt: Date, content: string | null }) => {
           if (!currentParticipant.clearedAt) {
             return true;
           }
@@ -197,7 +198,7 @@ export default async function ChatPage({ searchParams }: ChatPageProps) {
           return message.createdAt > currentParticipant.clearedAt;
         }) ?? null;
 
-      const unreadCount = session.messages.filter((message) => {
+      const unreadCount = session.messages.filter((message: { senderId: string, createdAt: Date }) => {
         if (message.senderId === appUser.id) {
           return false;
         }
@@ -242,7 +243,7 @@ export default async function ChatPage({ searchParams }: ChatPageProps) {
         },
       ];
     })
-    .sort((left, right) => {
+    .sort((left: { latestAt: string | null }, right: { latestAt: string | null }) => {
       const leftTime = left.latestAt ? new Date(left.latestAt).getTime() : 0;
       const rightTime = right.latestAt ? new Date(right.latestAt).getTime() : 0;
 
@@ -252,74 +253,74 @@ export default async function ChatPage({ searchParams }: ChatPageProps) {
   const selectedConversation =
     selectedSession && selectedPeer && selectedParticipant
       ? (() => {
-          const visibleMessages = selectedSession.messages.filter((message) => {
-            if (!selectedParticipant.clearedAt) {
-              return true;
-            }
+        const visibleMessages = selectedSession.messages.filter((message: { createdAt: Date }) => {
+          if (!selectedParticipant.clearedAt) {
+            return true;
+          }
 
-            return message.createdAt > selectedParticipant.clearedAt;
-          });
+          return message.createdAt > selectedParticipant.clearedAt;
+        });
 
-          const sharedAssets = extractConversationSharedAssets(visibleMessages);
+        const sharedAssets = extractConversationSharedAssets(visibleMessages);
 
-          return {
-            sessionId: selectedSession.id,
-            peer: {
-              id: selectedPeer.id,
-              name: selectedPeer.name,
-              email: selectedPeer.email,
-              avatarUrl: selectedPeer.avatarUrl,
-              isAi: selectedPeer.isAi,
-              isOnline: selectedPeer.isAi,
-            },
-            peerLastReadAt: selectedPeerParticipant?.lastReadAt?.toISOString() ?? null,
-            messages: visibleMessages.map((message) => {
-              const messageAssets = mapAssetRecords(
-                message.assets.map((asset) => ({
-                  kind: asset.kind,
-                  url: asset.url,
-                  title: asset.title,
-                  description: asset.description,
-                  accent: asset.accent,
-                  name: asset.name,
-                  meta: asset.meta,
-                  short: asset.short,
-                  tone: asset.tone,
-                  month: asset.month,
+        return {
+          sessionId: selectedSession.id,
+          peer: {
+            id: selectedPeer.id,
+            name: selectedPeer.name,
+            email: selectedPeer.email,
+            avatarUrl: selectedPeer.avatarUrl,
+            isAi: selectedPeer.isAi,
+            isOnline: selectedPeer.isAi,
+          },
+          peerLastReadAt: selectedPeerParticipant?.lastReadAt?.toISOString() ?? null,
+          messages: visibleMessages.map((message: { id: string, senderId: string, sender: { name: string | null, email: string | null }, content: string, createdAt: Date, isAi: boolean, reactions: Prisma.JsonValue, assets: { kind: "link" | "doc" | "media", url: string | null, title: string | null, description: string | null, accent: string | null, name: string | null, meta: string | null, short: string | null, tone: string | null, month: string | null }[] }) => {
+            const messageAssets = mapAssetRecords(
+              message.assets.map((asset: { kind: "link" | "doc" | "media", url: string | null, title: string | null, description: string | null, accent: string | null, name: string | null, meta: string | null, short: string | null, tone: string | null, month: string | null }) => ({
+                kind: asset.kind,
+                url: asset.url,
+                title: asset.title,
+                description: asset.description,
+                accent: asset.accent,
+                name: asset.name,
+                meta: asset.meta,
+                short: asset.short,
+                tone: asset.tone,
+                month: asset.month,
+              }))
+            );
+
+            return {
+              id: message.id,
+              senderId: message.senderId,
+              senderName: message.sender.name,
+              senderEmail: message.sender.email,
+              content: message.content,
+              createdAt: message.createdAt.toISOString(),
+              isAi: message.isAi,
+              isReadByPeer:
+                message.senderId === appUser.id &&
+                !!selectedPeerParticipant?.lastReadAt &&
+                message.createdAt <= selectedPeerParticipant.lastReadAt,
+              reactions: summarizeMessageReactions(message.reactions, appUser.id),
+              sharedLinks: messageAssets.sharedLinks,
+              sharedDocs: messageAssets.sharedDocs,
+              sharedMedia: messageAssets.sharedMedia.flatMap((group: { month: string, items: { tone: string, fileUrl?: string | null, fileSize?: number | null, mimeType?: string | null }[] }) =>
+                group.items.map((item: { tone: string, fileUrl?: string | null, fileSize?: number | null, mimeType?: string | null }) => ({
+                  month: group.month,
+                  tone: item.tone,
+                  fileUrl: item.fileUrl ?? null,
+                  fileSize: item.fileSize ?? null,
+                  mimeType: item.mimeType ?? null,
                 }))
-              );
-
-              return {
-                id: message.id,
-                senderId: message.senderId,
-                senderName: message.sender.name,
-                senderEmail: message.sender.email,
-                content: message.content,
-                createdAt: message.createdAt.toISOString(),
-                isAi: message.isAi,
-                isReadByPeer:
-                  message.senderId === appUser.id &&
-                  !!selectedPeerParticipant?.lastReadAt &&
-                  message.createdAt <= selectedPeerParticipant.lastReadAt,
-                reactions: summarizeMessageReactions(message.reactions, appUser.id),
-                sharedLinks: messageAssets.sharedLinks,
-                sharedDocs: messageAssets.sharedDocs,
-                sharedMedia: messageAssets.sharedMedia.flatMap((group) =>
-                  group.items.map((item) => ({
-                    month: group.month,
-                    tone: item.tone,
-                    fileUrl: item.fileUrl ?? null,
-                    fileSize: item.fileSize ?? null,
-                    mimeType: item.mimeType ?? null,
-                  }))
-                ),
-              };
-            }),
-            sharedLinks: sharedAssets.sharedLinks,
-            sharedDocs: sharedAssets.sharedDocs,
-            sharedMedia: sharedAssets.sharedMedia,
-          };
-        })()
+              ),
+            };
+          }),
+          sharedLinks: sharedAssets.sharedLinks,
+          sharedDocs: sharedAssets.sharedDocs,
+          sharedMedia: sharedAssets.sharedMedia,
+        };
+      })()
       : null;
 
   return (
@@ -331,7 +332,7 @@ export default async function ChatPage({ searchParams }: ChatPageProps) {
         avatarUrl: appUser.avatarUrl,
         isAi: appUser.isAi,
       }}
-      contacts={contacts.map((contact) => ({
+      contacts={contacts.map((contact: { id: string, name: string | null, email: string | null, avatarUrl: string | null, isAi: boolean }) => ({
         id: contact.id,
         name: contact.name,
         email: contact.email,

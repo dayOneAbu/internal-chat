@@ -70,7 +70,7 @@ export async function POST(request: Request) {
     const orderedMessages = [...messages].reverse();
     const lastMessage = orderedMessages[orderedMessages.length - 1] ?? null;
 
-    const transcript: ShipAssistMessage[] = orderedMessages.map((message) => ({
+    const transcript: ShipAssistMessage[] = orderedMessages.map((message: { senderId: string, content: string, sender: { isAi: boolean } }) => ({
       role:
         message.senderId === user.id
           ? "user"

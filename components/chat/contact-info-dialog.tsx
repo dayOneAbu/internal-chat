@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Phone, Video, Link2, X } from "lucide-react";
 import Image from "next/image";
 import {
@@ -28,10 +28,12 @@ export function ContactInfoDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const [activeTab, setActiveTab] = useState<"media" | "link" | "docs">("media");
+  const [prevSessionId, setPrevSessionId] = useState(conversation?.sessionId);
 
-  useEffect(() => {
+  if (conversation?.sessionId !== prevSessionId) {
+    setPrevSessionId(conversation?.sessionId);
     setActiveTab("media");
-  }, [conversation?.sessionId]);
+  }
 
   if (!conversation) return null;
 
