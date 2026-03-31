@@ -111,7 +111,7 @@ export async function signUpAction(formData: FormData) {
       data: {
         full_name: credentials.fullName,
       },
-      emailRedirectTo: `${publicEnv.NEXT_PUBLIC_APP_URL}/auth/callback`,
+      emailRedirectTo: new URL("/auth/callback", publicEnv.NEXT_PUBLIC_APP_URL).toString(),
     },
   });
 
@@ -147,7 +147,7 @@ export async function signInWithGoogleAction(formData: FormData) {
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: "google",
     options: {
-      redirectTo: `${publicEnv.NEXT_PUBLIC_APP_URL}/auth/callback`,
+      redirectTo: new URL("/auth/callback", publicEnv.NEXT_PUBLIC_APP_URL).toString(),
       queryParams: {
         prompt: "select_account",
       },
