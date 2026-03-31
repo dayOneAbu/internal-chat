@@ -8,9 +8,10 @@ export function getDirectSessionKey(userAId: string, userBId: string) {
   return [userAId, userBId].sort().join("::");
 }
 
-export async function findOrCreateDirectSession(
+async function findOrCreateSession(
   currentUserId: string,
-  targetUserId: string
+  targetUserId: string,
+  kind: "direct" | "ai"
 ) {
   const directKey = getDirectSessionKey(currentUserId, targetUserId);
 
@@ -20,6 +21,14 @@ export async function findOrCreateDirectSession(
 
   if (existingSession) {
     await prisma.$transaction([
+      prisma.session.update({
+        where: {
+          id: existingSession.id,
+        },
+        data: {
+          kind,
+        },
+      }),
       prisma.sessionParticipant.upsert({
         where: {
           sessionId_userId: {
@@ -59,7 +68,7 @@ export async function findOrCreateDirectSession(
   try {
     return await prisma.session.create({
       data: {
-        kind: "direct",
+        kind,
         directKey,
         participants: {
           create: [
@@ -85,4 +94,18 @@ export async function findOrCreateDirectSession(
 
     throw error;
   }
+}
+
+export async function findOrCreateDirectSession(
+  currentUserId: string,
+  targetUserId: string
+) {
+  return findOrCreateSession(currentUserId, targetUserId, "direct");
+}
+
+export async function findOrCreateAiSession(
+  currentUserId: string,
+  aiUserId: string
+) {
+  return findOrCreateSession(currentUserId, aiUserId, "ai");
 }

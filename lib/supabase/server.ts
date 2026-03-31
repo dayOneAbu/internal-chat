@@ -3,7 +3,10 @@ import "server-only";
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 
+import { createClient } from "@supabase/supabase-js";
+
 import { publicEnv } from "@/lib/env/public";
+import { serverEnv } from "@/lib/env/server";
 
 export async function createSupabaseServerClient() {
   const cookieStore = await cookies();
@@ -28,4 +31,21 @@ export async function createSupabaseServerClient() {
       },
     }
   );
+}
+
+export function createSupabaseAdminClient() {
+  const secretKey = serverEnv.SUPABASE_SECRET_KEY;
+
+  if (!secretKey) {
+    throw new Error(
+      "Missing Supabase admin credentials (SUPABASE_SECRET_KEY/SUPABASE_SERVICE_ROLE_KEY)."
+    );
+  }
+
+  return createClient(publicEnv.NEXT_PUBLIC_SUPABASE_URL, secretKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  });
 }

@@ -2,13 +2,56 @@
 
 import { redirect } from "next/navigation";
 
-import { findOrCreateDirectSession } from "@/lib/chat";
+import {
+  ensureShipAssistUser,
+  generateAiReply,
+  type ShipAssistMessage,
+} from "@/lib/ai/ship-assist";
+import {
+  serializeChatUser,
+  serializeRealtimeMessage,
+} from "@/lib/realtime/events";
+import {
+  dedupeSharedDocs,
+  dedupeSharedLinks,
+  dedupeSharedMedia,
+  parseSharedDocs,
+  parseSharedLinks,
+  parseSharedMedia,
+  parseUploadedAssets,
+} from "@/lib/chat-shared-assets";
+import { findOrCreateAiSession, findOrCreateDirectSession } from "@/lib/chat";
+import {
+  MESSAGE_REACTION_EMOJIS,
+  summarizeMessageReactions,
+  toggleStoredMessageReaction,
+  type MessageReactionSummary,
+} from "@/lib/message-reactions";
 import { prisma } from "@/lib/prisma";
+import {
+  broadcastMessageCreated,
+  broadcastMessageReactionsUpdated,
+  broadcastReadReceipt,
+} from "@/lib/supabase/realtime";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 function getString(formData: FormData, key: string) {
   const value = formData.get(key);
   return typeof value === "string" ? value.trim() : "";
+}
+
+function getJsonField(formData: FormData, key: string) {
+  const value = getString(formData, key);
+
+  if (!value) {
+    return [];
+  }
+
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return [];
+  }
 }
 
 function extractSharedLinks(content: string) {
@@ -64,6 +107,85 @@ function extractSharedMedia(content: string) {
   ];
 }
 
+function buildMessageContent(
+  content: string,
+  counts: { links: number; docs: number; media: number }
+) {
+  if (content) {
+    return content;
+  }
+
+  const summary = [
+    counts.links > 0
+      ? `${counts.links} ${counts.links === 1 ? "link" : "links"}`
+      : null,
+    counts.docs > 0
+      ? `${counts.docs} ${counts.docs === 1 ? "document" : "documents"}`
+      : null,
+    counts.media > 0
+      ? `${counts.media} ${counts.media === 1 ? "media item" : "media items"}`
+      : null,
+  ].filter(Boolean);
+
+  return summary.length > 0
+    ? `Shared ${summary.join(", ")}.`
+    : "Shared an update.";
+}
+
+function buildAssetCreates(payload: {
+  sharedLinks: ReturnType<typeof dedupeSharedLinks>;
+  sharedDocs: ReturnType<typeof dedupeSharedDocs>;
+  sharedMedia: ReturnType<typeof dedupeSharedMedia>;
+  uploadedAssets: ReturnType<typeof parseUploadedAssets>;
+}) {
+  return [
+    ...payload.sharedLinks.map((item) => ({
+      kind: "link" as const,
+      url: item.url,
+      title: item.title ?? undefined,
+      description: item.description ?? undefined,
+      accent: item.accent ?? undefined,
+    })),
+    ...payload.sharedDocs.map((item) => ({
+      kind: "doc" as const,
+      name: item.name,
+      meta: item.meta,
+      short: item.short ?? undefined,
+      tone: item.tone ?? undefined,
+    })),
+    ...payload.sharedMedia.map((item) => ({
+      kind: "media" as const,
+      month: item.month,
+      tone: item.tone,
+    })),
+    ...payload.uploadedAssets.map((item) => ({
+      kind: item.kind,
+      fileUrl: item.fileUrl,
+      fileSize: item.fileSize ?? undefined,
+      mimeType: item.mimeType ?? undefined,
+      name: item.name ?? undefined,
+      month:
+        item.kind === "media"
+          ? new Intl.DateTimeFormat("en-US", { month: "long" }).format(
+              new Date()
+            )
+          : undefined,
+      tone:
+        item.kind === "media"
+          ? "from-slate-700 via-slate-800 to-black"
+          : undefined,
+      meta:
+        item.kind === "doc"
+          ? `Uploaded • ${item.fileSize ? Math.round(item.fileSize / 1024) + " KB" : "Unknown size"}`
+          : undefined,
+      short:
+        item.kind === "doc" && item.name
+          ? item.name.split(".").pop()?.toUpperCase()
+          : undefined,
+    })),
+  ];
+}
+
 function getChatRedirectPath(formData: FormData, sessionId?: string | null) {
   const requestedPath = getString(formData, "redirectTo");
 
@@ -104,6 +226,177 @@ async function requireCurrentParticipant(sessionId: string, currentUserId: strin
   return participant;
 }
 
+function buildConversationViewers(
+  participants: Array<{
+    userId: string;
+    isMuted: boolean;
+    isArchived: boolean;
+    user: {
+      id: string;
+      name: string | null;
+      email: string | null;
+      avatarUrl: string | null;
+      isAi: boolean;
+    };
+  }>
+) {
+  return participants.flatMap((participant) => {
+    const peer = participants.find(
+      (candidate) => candidate.userId !== participant.userId
+    )?.user;
+
+    if (!peer) {
+      return [];
+    }
+
+    return [
+      {
+        userId: participant.userId,
+        peer: serializeChatUser(peer),
+        isMuted: participant.isMuted,
+        isArchived: participant.isArchived,
+      },
+    ];
+  });
+}
+
+async function replyAsAi(sessionId: string, currentUserId: string) {
+  const participant = await requireCurrentParticipant(sessionId, currentUserId);
+  const session = await prisma.session.findUnique({
+    where: {
+      id: sessionId,
+    },
+    include: {
+      participants: {
+        include: {
+          user: true,
+        },
+      },
+    },
+  });
+
+  if (!session || session.kind !== "ai") {
+    return;
+  }
+
+  const aiParticipant = session.participants.find((entry) => entry.user.isAi);
+
+  if (!aiParticipant || aiParticipant.userId === currentUserId) {
+    return;
+  }
+
+  const recentMessages = await prisma.message.findMany({
+    where: {
+      sessionId,
+      ...(participant.clearedAt
+        ? {
+            createdAt: {
+              gt: participant.clearedAt,
+            },
+          }
+        : {}),
+    },
+    orderBy: {
+      createdAt: "desc",
+    },
+    take: 10,
+    include: {
+      sender: {
+        select: {
+          id: true,
+          isAi: true,
+        },
+      },
+    },
+  });
+
+  const orderedMessages = [...recentMessages].reverse();
+  const latestMessage = orderedMessages[orderedMessages.length - 1];
+
+  if (!latestMessage || latestMessage.senderId !== currentUserId) {
+    return;
+  }
+
+  const transcript: ShipAssistMessage[] = orderedMessages.map((message) => ({
+    role:
+      message.senderId === currentUserId
+        ? "user"
+        : message.sender.isAi
+          ? "assistant"
+          : "peer",
+    content: message.content,
+  }));
+  const reply = await generateAiReply(transcript);
+
+  const { message, participants } = await prisma.$transaction(async (tx) => {
+    const message = await tx.message.create({
+      data: {
+        sessionId,
+        senderId: aiParticipant.userId,
+        isAi: true,
+        content: reply,
+      },
+      include: {
+        sender: true,
+        assets: true,
+      },
+    });
+
+    await tx.session.update({
+      where: {
+        id: sessionId,
+      },
+      data: {
+        updatedAt: message.createdAt,
+      },
+    });
+
+    await tx.sessionParticipant.update({
+      where: {
+        sessionId_userId: {
+          sessionId,
+          userId: aiParticipant.userId,
+        },
+      },
+      data: {
+        lastReadAt: message.createdAt,
+      },
+    });
+
+    await tx.sessionParticipant.updateMany({
+      where: {
+        sessionId,
+        userId: {
+          not: aiParticipant.userId,
+        },
+      },
+      data: {
+        isArchived: false,
+      },
+    });
+
+    const participants = await tx.sessionParticipant.findMany({
+      where: {
+        sessionId,
+      },
+      include: {
+        user: true,
+      },
+    });
+
+    return {
+      message,
+      participants,
+    };
+  });
+
+  await broadcastMessageCreated({
+    sessionId,
+    message: serializeRealtimeMessage(message, currentUserId),
+    viewers: buildConversationViewers(participants),
+  });
+}
+
 export async function openDirectSessionAction(formData: FormData) {
   const currentUserId = await requireCurrentUserId();
   const targetUserId = getString(formData, "targetUserId");
@@ -114,14 +407,20 @@ export async function openDirectSessionAction(formData: FormData) {
 
   const targetUser = await prisma.user.findUnique({
     where: { id: targetUserId },
-    select: { id: true },
+    select: { id: true, isAi: true },
   });
 
   if (!targetUser) {
     redirect("/chat");
   }
 
-  const session = await findOrCreateDirectSession(currentUserId, targetUserId);
+  if (targetUser.isAi) {
+    await ensureShipAssistUser();
+  }
+
+  const session = targetUser.isAi
+    ? await findOrCreateAiSession(currentUserId, targetUserId)
+    : await findOrCreateDirectSession(currentUserId, targetUserId);
   redirect(`/chat?session=${session.id}`);
 }
 
@@ -129,29 +428,72 @@ export async function sendMessageAction(formData: FormData) {
   const currentUserId = await requireCurrentUserId();
   const sessionId = getString(formData, "sessionId");
   const content = getString(formData, "content");
+  const sharedLinks = dedupeSharedLinks([
+    ...parseSharedLinks(getJsonField(formData, "sharedLinksJson")),
+    ...extractSharedLinks(content),
+  ]);
+  const sharedDocs = dedupeSharedDocs([
+    ...parseSharedDocs(getJsonField(formData, "sharedDocsJson")),
+    ...extractSharedDocs(content),
+  ]);
+  const sharedMedia = dedupeSharedMedia([
+    ...parseSharedMedia(getJsonField(formData, "sharedMediaJson")),
+    ...extractSharedMedia(content),
+  ]);
+  const uploadedAssets = parseUploadedAssets(
+    getJsonField(formData, "uploadedAssetsJson")
+  );
+  
+  const resolvedContent = buildMessageContent(content, {
+    links: sharedLinks.length,
+    docs: sharedDocs.length + uploadedAssets.filter(a => a.kind === "doc").length,
+    media: sharedMedia.length + uploadedAssets.filter(a => a.kind === "media").length,
+  });
+  const assetCreates = buildAssetCreates({
+    sharedLinks,
+    sharedDocs,
+    sharedMedia,
+    uploadedAssets,
+  });
 
-  if (!sessionId || !content) {
-    redirect(sessionId ? `/chat?session=${sessionId}` : "/chat");
+  if (
+    !sessionId ||
+    (!content &&
+      sharedLinks.length === 0 &&
+      sharedDocs.length === 0 &&
+      sharedMedia.length === 0 &&
+      uploadedAssets.length === 0)
+  ) {
+    return;
   }
 
   await requireCurrentParticipant(sessionId, currentUserId);
 
-  await prisma.$transaction([
-    prisma.message.create({
+  const { message, participants } = await prisma.$transaction(async (tx) => {
+    const message = await tx.message.create({
       data: {
         sessionId,
         senderId: currentUserId,
-        content,
-        sharedLinks: extractSharedLinks(content),
-        sharedDocs: extractSharedDocs(content),
-        sharedMedia: extractSharedMedia(content),
+        content: resolvedContent,
+        assets:
+          assetCreates.length > 0
+            ? {
+                create: assetCreates,
+              }
+            : undefined,
       },
-    }),
-    prisma.session.update({
+      include: {
+        sender: true,
+        assets: true,
+      },
+    });
+
+    await tx.session.update({
       where: { id: sessionId },
-      data: { updatedAt: new Date() },
-    }),
-    prisma.sessionParticipant.update({
+      data: { updatedAt: message.createdAt },
+    });
+
+    await tx.sessionParticipant.update({
       where: {
         sessionId_userId: {
           sessionId,
@@ -161,12 +503,142 @@ export async function sendMessageAction(formData: FormData) {
       data: {
         isArchived: false,
         clearedAt: null,
-        lastReadAt: new Date(),
+        lastReadAt: message.createdAt,
       },
-    }),
-  ]);
+    });
 
-  redirect(`/chat?session=${sessionId}`);
+    await tx.sessionParticipant.updateMany({
+      where: {
+        sessionId,
+        userId: {
+          not: currentUserId,
+        },
+      },
+      data: {
+        isArchived: false,
+      },
+    });
+
+    const participants = await tx.sessionParticipant.findMany({
+      where: {
+        sessionId,
+      },
+      include: {
+        user: true,
+      },
+    });
+
+    return {
+      message,
+      participants,
+    };
+  });
+
+  const realtimeMessage = serializeRealtimeMessage(message, currentUserId);
+  const viewers = buildConversationViewers(participants);
+
+  await broadcastMessageCreated({
+    sessionId,
+    message: realtimeMessage,
+    viewers,
+  });
+
+  const aiParticipant = participants.find((participant) => participant.user.isAi);
+
+  if (aiParticipant) {
+    await replyAsAi(sessionId, currentUserId);
+  }
+}
+
+export async function toggleMessageReactionAction(messageId: string, emoji: string) {
+  const currentUserId = await requireCurrentUserId();
+
+  if (!messageId || !emoji) {
+    return [] as MessageReactionSummary[];
+  }
+
+  if (!MESSAGE_REACTION_EMOJIS.includes(emoji as never)) {
+    return [] as MessageReactionSummary[];
+  }
+
+  const message = await prisma.message.findUnique({
+    where: {
+      id: messageId,
+    },
+    select: {
+      id: true,
+      sessionId: true,
+      reactions: true,
+      session: {
+        select: {
+          id: true,
+        },
+      },
+    },
+  });
+
+  if (!message) {
+    return [] as MessageReactionSummary[];
+  }
+
+  await requireCurrentParticipant(message.sessionId, currentUserId);
+
+  const nextStoredReactions = toggleStoredMessageReaction(
+    message.reactions,
+    emoji,
+    currentUserId
+  );
+  const updatedMessage = await prisma.message.update({
+    where: {
+      id: messageId,
+    },
+    data: {
+      reactions: nextStoredReactions,
+    },
+    select: {
+      sessionId: true,
+      reactions: true,
+    },
+  });
+
+  const summarized = summarizeMessageReactions(
+    updatedMessage.reactions,
+    currentUserId
+  );
+
+  await broadcastMessageReactionsUpdated({
+    sessionId: updatedMessage.sessionId,
+    messageId,
+    reactions: nextStoredReactions,
+  });
+
+  return summarized;
+}
+
+export async function markReadAction(sessionId: string) {
+  const currentUserId = await requireCurrentUserId();
+
+  if (!sessionId) {
+    return;
+  }
+
+  await requireCurrentParticipant(sessionId, currentUserId);
+
+  const readAt = new Date();
+
+  await prisma.sessionParticipant.update({
+    where: {
+      sessionId_userId: {
+        sessionId,
+        userId: currentUserId,
+      },
+    },
+    data: {
+      lastReadAt: readAt,
+    },
+  });
+
+  await broadcastReadReceipt(sessionId, currentUserId, readAt.toISOString());
 }
 
 export async function archiveConversationAction(formData: FormData) {

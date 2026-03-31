@@ -13,6 +13,7 @@ export type ConversationListItem = ChatUser & {
   isSelected: boolean;
   isOnline: boolean;
   isUnread: boolean;
+  unreadCount: number;
   isMuted: boolean;
 };
 
@@ -24,9 +25,17 @@ export type MessageItem = {
   content: string;
   createdAt: string;
   isAi: boolean;
+  isReadByPeer?: boolean;
+  reactions?: MessageReactionItem[];
   sharedLinks?: SharedLinkItem[];
   sharedDocs?: SharedDocItem[];
   sharedMedia?: SharedMediaItem[];
+};
+
+export type MessageReactionItem = {
+  emoji: string;
+  count: number;
+  reactedByCurrentUser: boolean;
 };
 
 export type SharedLinkItem = {
@@ -41,11 +50,17 @@ export type SharedDocItem = {
   meta: string;
   tone?: string | null;
   short?: string | null;
+  fileUrl?: string | null;
+  fileSize?: number | null;
+  mimeType?: string | null;
 };
 
 export type SharedMediaItem = {
   month: string;
   tone: string;
+  fileUrl?: string | null;
+  fileSize?: number | null;
+  mimeType?: string | null;
 };
 
 export type SelectedConversation = {
@@ -53,12 +68,13 @@ export type SelectedConversation = {
   peer: ChatUser & {
     isOnline: boolean;
   };
+  peerLastReadAt: string | null;
   messages: MessageItem[];
   sharedLinks: SharedLinkItem[];
   sharedDocs: SharedDocItem[];
   sharedMedia: {
     month: string;
-    items: string[];
+    items: SharedMediaItem[];
   }[];
 };
 
@@ -66,7 +82,13 @@ export type RealtimeMessageInsert = {
   id: string;
   sessionId: string;
   senderId: string;
+  senderName: string | null;
+  senderEmail: string | null;
   content: string;
   createdAt: string;
   isAi: boolean;
+  reactions: MessageReactionItem[];
+  sharedLinks: SharedLinkItem[];
+  sharedDocs: SharedDocItem[];
+  sharedMedia: SharedMediaItem[];
 };

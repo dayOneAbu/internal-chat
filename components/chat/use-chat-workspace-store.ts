@@ -5,9 +5,11 @@ import { create } from "zustand";
 import type {
   ChatUser,
   ConversationListItem,
+  MessageReactionItem,
   RealtimeMessageInsert,
   SelectedConversation,
 } from "@/components/chat/chat-types";
+import { extractConversationSharedAssets } from "@/lib/chat-shared-assets";
 
 type ChatWorkspaceState = {
   contacts: ChatUser[];
@@ -15,9 +17,13 @@ type ChatWorkspaceState = {
   activeConversation: SelectedConversation | null;
   detailsOpen: boolean;
   newMessageOpen: boolean;
+  searchOpen: boolean;
   listQuery: string;
+  messageSearchQuery: string;
   newMessageQuery: string;
-  onlineUserIds: string[];
+  presenceByUserId: Record<string, true>;
+  typingBySessionId: Record<string, string[]>;
+  activeCall: { callId: string; roomName: string } | null;
   initialize: (payload: {
     contacts: ChatUser[];
     conversations: ConversationListItem[];
@@ -25,13 +31,31 @@ type ChatWorkspaceState = {
   }) => void;
   setDetailsOpen: (open: boolean) => void;
   setNewMessageOpen: (open: boolean) => void;
+  setSearchOpen: (open: boolean) => void;
   setListQuery: (query: string) => void;
+  setMessageSearchQuery: (query: string) => void;
   setNewMessageQuery: (query: string) => void;
-  setOnlineUserIds: (userIds: string[]) => void;
+  setPresenceMembers: (userIds: string[]) => void;
+  setTypingUsers: (sessionId: string, userIds: string[]) => void;
+  setActiveCall: (call: { callId: string; roomName: string } | null) => void;
+  applyMessageReactions: (
+    sessionId: string,
+    messageId: string,
+    reactions: MessageReactionItem[]
+  ) => void;
   applyInsertedMessage: (
     message: RealtimeMessageInsert,
-    currentUserId: string
+    currentUserId: string,
+    conversationMeta?: {
+      sessionId: string;
+      peer: ChatUser;
+      latestMessage: string;
+      latestAt: string;
+      isMuted: boolean;
+      isArchived: boolean;
+    }
   ) => void;
+  applyReadReceipt?: (sessionId: string, readAt: string) => void;
 };
 
 export const useChatWorkspaceStore = create<ChatWorkspaceState>((set, get) => ({
@@ -40,47 +64,131 @@ export const useChatWorkspaceStore = create<ChatWorkspaceState>((set, get) => ({
   activeConversation: null,
   detailsOpen: false,
   newMessageOpen: false,
+  searchOpen: false,
   listQuery: "",
+  messageSearchQuery: "",
   newMessageQuery: "",
-  onlineUserIds: [],
+  presenceByUserId: {},
+  typingBySessionId: {},
+  activeCall: null,
   initialize: ({ contacts, conversations, selectedConversation }) =>
     set({
       contacts,
       conversationItems: conversations,
       activeConversation: selectedConversation,
-      detailsOpen: Boolean(selectedConversation),
-      onlineUserIds: get().onlineUserIds,
+      detailsOpen: get().detailsOpen,
+      searchOpen: get().searchOpen,
+      messageSearchQuery: get().messageSearchQuery,
+      presenceByUserId: get().presenceByUserId,
+      typingBySessionId: get().typingBySessionId,
     }),
   setDetailsOpen: (detailsOpen) => set({ detailsOpen }),
   setNewMessageOpen: (newMessageOpen) => set({ newMessageOpen }),
+  setSearchOpen: (searchOpen) => set({ searchOpen }),
   setListQuery: (listQuery) => set({ listQuery }),
+  setMessageSearchQuery: (messageSearchQuery) => set({ messageSearchQuery }),
   setNewMessageQuery: (newMessageQuery) => set({ newMessageQuery }),
-  setOnlineUserIds: (onlineUserIds) => set({ onlineUserIds }),
-  applyInsertedMessage: (message, currentUserId) =>
+  setPresenceMembers: (userIds) =>
+    set({
+      presenceByUserId: Object.fromEntries(userIds.map((userId) => [userId, true])),
+    }),
+  setTypingUsers: (sessionId, userIds) =>
+    set((state) => ({
+      typingBySessionId: {
+        ...state.typingBySessionId,
+        [sessionId]: userIds,
+      },
+    })),
+  setActiveCall: (activeCall) => set({ activeCall }),
+  applyMessageReactions: (sessionId, messageId, reactions) =>
     set((state) => {
-      const existingConversation = state.conversationItems.find(
-        (conversation) => conversation.sessionId === message.sessionId
-      );
+      const activeConversation = state.activeConversation;
 
-      if (!existingConversation) {
+      if (!activeConversation || activeConversation.sessionId !== sessionId) {
         return state;
       }
 
-      const nextConversationItems = state.conversationItems
-        .map((conversation) => {
-          if (conversation.sessionId !== message.sessionId) {
-            return conversation;
-          }
+      let hasChanges = false;
+      const nextMessages = activeConversation.messages.map((message) => {
+        if (message.id !== messageId) {
+          return message;
+        }
 
-          return {
-            ...conversation,
-            latestMessage: message.content,
-            latestAt: message.createdAt,
-            isUnread:
-              message.senderId !== currentUserId &&
-              state.activeConversation?.sessionId !== message.sessionId,
-          };
-        })
+        hasChanges = true;
+        return {
+          ...message,
+          reactions,
+        };
+      });
+
+      if (!hasChanges) {
+        return state;
+      }
+
+      return {
+        activeConversation: {
+          ...activeConversation,
+          messages: nextMessages,
+        },
+      };
+    }),
+  applyInsertedMessage: (message, currentUserId, conversationMeta) =>
+    set((state) => {
+      const activeConversation = state.activeConversation;
+      const isActiveConversation =
+        activeConversation?.sessionId === message.sessionId;
+      const incrementsUnread =
+        message.senderId !== currentUserId && !isActiveConversation;
+
+      const nextConversationItems = [
+        ...state.conversationItems.filter(
+          (conversation) => conversation.sessionId !== message.sessionId
+        ),
+        (
+          state.conversationItems.find(
+            (conversation) => conversation.sessionId === message.sessionId
+          ) ??
+          (conversationMeta && !conversationMeta.isArchived
+            ? {
+                ...conversationMeta.peer,
+                sessionId: conversationMeta.sessionId,
+                latestMessage: conversationMeta.latestMessage,
+                latestAt: conversationMeta.latestAt,
+                isSelected: false,
+                isOnline: false,
+                isUnread: incrementsUnread,
+                unreadCount: incrementsUnread ? 1 : 0,
+                isMuted: conversationMeta.isMuted,
+              }
+            : null)
+        ),
+      ]
+        .filter(
+          (conversation): conversation is ConversationListItem => conversation !== null
+        )
+        .map((conversation) =>
+          conversation.sessionId === message.sessionId
+            ? {
+                ...conversation,
+                latestMessage: message.content,
+                latestAt: message.createdAt,
+                isUnread:
+                  conversation.sessionId === message.sessionId
+                    ? incrementsUnread ||
+                      (!isActiveConversation && conversation.unreadCount > 0)
+                    : conversation.isUnread,
+                unreadCount:
+                  conversation.sessionId === message.sessionId
+                    ? incrementsUnread
+                      ? conversation.unreadCount + 1
+                      : isActiveConversation
+                        ? 0
+                        : conversation.unreadCount
+                    : conversation.unreadCount,
+                isMuted: conversationMeta?.isMuted ?? conversation.isMuted,
+              }
+            : conversation
+        )
         .sort((left, right) => {
           const leftTime = left.latestAt ? new Date(left.latestAt).getTime() : 0;
           const rightTime = right.latestAt ? new Date(right.latestAt).getTime() : 0;
@@ -88,26 +196,44 @@ export const useChatWorkspaceStore = create<ChatWorkspaceState>((set, get) => ({
           return rightTime - leftTime;
         });
 
+      const nextContacts = conversationMeta
+        ? state.contacts.some((contact) => contact.id === conversationMeta.peer.id)
+          ? state.contacts
+          : [...state.contacts, conversationMeta.peer]
+        : state.contacts;
+
       if (
-        !state.activeConversation ||
-        state.activeConversation.sessionId !== message.sessionId ||
-        state.activeConversation.messages.some((entry) => entry.id === message.id)
+        !isActiveConversation ||
+        !activeConversation ||
+        activeConversation.messages.some((entry) => entry.id === message.id)
       ) {
         return {
+          contacts: nextContacts,
           conversationItems: nextConversationItems,
         };
       }
 
-      const sender = [state.contacts, [state.activeConversation.peer]]
+      const sender = [state.contacts, [activeConversation.peer]]
         .flat()
         .find((contact) => contact.id === message.senderId);
 
       return {
         conversationItems: nextConversationItems,
         activeConversation: {
-          ...state.activeConversation,
+          ...activeConversation,
+          ...(extractConversationSharedAssets([
+            ...activeConversation.messages,
+            {
+              sharedLinks: message.sharedLinks,
+              sharedDocs: message.sharedDocs,
+              sharedMedia: message.sharedMedia,
+            },
+          ]) as Pick<
+            SelectedConversation,
+            "sharedLinks" | "sharedDocs" | "sharedMedia"
+          >),
           messages: [
-            ...state.activeConversation.messages,
+            ...activeConversation.messages,
             {
               id: message.id,
               senderId: message.senderId,
@@ -116,8 +242,45 @@ export const useChatWorkspaceStore = create<ChatWorkspaceState>((set, get) => ({
               content: message.content,
               createdAt: message.createdAt,
               isAi: message.isAi,
+              isReadByPeer: false,
+              reactions: message.reactions,
+              sharedLinks: message.sharedLinks,
+              sharedDocs: message.sharedDocs,
+              sharedMedia: message.sharedMedia,
             },
           ],
+        },
+        contacts: nextContacts,
+      };
+    }),
+  applyReadReceipt: (sessionId, readAt) =>
+    set((state) => {
+      const activeConversation = state.activeConversation;
+      if (!activeConversation || activeConversation.sessionId !== sessionId) {
+        return state;
+      }
+      
+      const readDate = new Date(readAt).getTime();
+      let hasChanges = false;
+      const nextMessages = activeConversation.messages.map((message) => {
+        if (!message.isReadByPeer && message.senderId !== activeConversation.peer.id) {
+          const createdAtDate = new Date(message.createdAt).getTime();
+          if (createdAtDate <= readDate) {
+            hasChanges = true;
+            return { ...message, isReadByPeer: true };
+          }
+        }
+        return message;
+      });
+
+      if (!hasChanges) {
+        return state;
+      }
+
+      return {
+        activeConversation: {
+          ...activeConversation,
+          messages: nextMessages,
         },
       };
     }),
